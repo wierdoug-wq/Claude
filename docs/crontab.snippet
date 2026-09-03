@@ -1,0 +1,19 @@
+# --- Ad-hoc task queue --------------------------------------------------
+# Add these to `crontab -e` on lab01, BELOW the existing CRON_TZ line.
+#
+# CRON_TZ=America/Chicago MUST already be at the top of the crontab. lab01's
+# system timezone is Etc/UTC, so a crontab without it fires 5-6 hours early --
+# silently, exiting zero, at the wrong time. Do not remove it.
+#
+# PATH must also already be set; cron's default environment is too bare to
+# find /usr/bin/claude.
+
+# Ad-hoc tasks marked `priority: now` -- every 10 minutes.
+# Cheap when the queue is empty: the runner exits immediately without starting
+# a Claude session.
+*/10 * * * * $HOME/bin/queue-runner.sh --now
+
+# Everything still queued -- once, in the 3-4am window, spaced clear of the
+# four existing routines (08 3, 33 3, 56 3 Fri, 17 4 Mondays in August) so two
+# full Claude sessions never compete for the same quota.
+44 4 * * * $HOME/bin/queue-runner.sh --drain

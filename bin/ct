@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+#
+# ct — queue an ad-hoc Claude task on lab01. Built to be typed on a phone.
+#
+#   ct "summarise this week's calendar and flag any conflicts"
+#   ct -n "what did the choir group post today"     # run within ~10 min
+#   ct -t 'mcp__playwright__browser_navigate' "..."  # grant an extra tool
+#   ct -l                                            # list queue + recent results
+#
+# Without -n the task waits for the 3-4am drain, which is the default on
+# purpose: a task fired at 9am can burn the session you wanted at 9am.
+
+set -euo pipefail
+TASKS="${TASKS:-$HOME/claude-tasks}"
+VAULT="${VAULT:-$HOME/vault}"
+QUEUE="$TASKS/queue"
+priority=defer
+tools=""
+
+while getopts ':nt:lh' opt; do
+  case "$opt" in
+    n) priority=now ;;
+    t) tools="$OPTARG" ;;
+    l)
+      echo "queued:"; ls -1 "$QUEUE" 2>/dev/null | sed 's/^/  /' || true
+      echo "recent results:"
+      ls -1t "$VAULT/00_Inbox/Agent_Results" 2>/dev/null | head -5 | sed 's/^/  /' || true
+      exit 0 ;;
+    h) sed -n '2,14p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *) echo "ct: bad flag; try -h" >&2; exit 2 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+prompt="$*"
+[[ -n "${prompt//[[:space:]]/}" ]] || { echo "ct: nothing to queue; try -h" >&2; exit 2; }
+
+mkdir -p "$QUEUE"
+
+# Slug from the first few words, so the queue and the result notes are readable
+# at a glance instead of being a wall of timestamps.
+slug="$(printf '%s' "$prompt" | tr '[:upper:]' '[:lower:]' \
+        | tr -cs 'a-z0-9' '-' | cut -c1-40 | sed 's/^-*//; s/-*$//')"
+[[ -n "$slug" ]] || slug=task
+file="$QUEUE/$(date +%Y%m%d-%H%M%S)-$slug.md"
+
+{
+  echo '---'
+  echo "priority: $priority"
+  [[ -n "$tools" ]] && echo "tools: $tools"
+  echo "queued: $(date -Iseconds)"
+  echo '---'
+  echo
+  echo "$prompt"
+} >"$file"
+
+if [[ "$priority" == now ]]; then
+  echo "queued (runs within ~10 min): $(basename "$file")"
+else
+  echo "queued for the overnight drain: $(basename "$file")"
+fi

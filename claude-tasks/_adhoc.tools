@@ -1,0 +1,37 @@
+# Default tool allowlist for ad-hoc queued tasks.
+#
+# Read-only by construction, the same principle the daily email scan follows:
+# an unattended run physically cannot send mail, move files, or execute a shell
+# even if the prompt is misread or the task text is not what you meant.
+#
+# Results reach the vault via the runner, which writes Claude's output into
+# 00_Inbox/Agent_Results/ itself — no task needs Write to produce a note.
+#
+# Grant anything beyond this per task, with `ct -t`, and only when you mean it:
+#   Write,Edit          let the task modify vault notes directly
+#   Bash                let the task execute shell on lab01
+#   mcp__claude_ai_Gmail__send_message   let it mail out
+
+# --- reading the vault and the web ---
+Read
+Glob
+Grep
+WebFetch
+WebSearch
+
+# --- Gmail: search and read only, no send/reply/trash/label ---
+mcp__claude_ai_Gmail__search_threads
+mcp__claude_ai_Gmail__get_thread
+
+# --- Calendar: read only, no create/update/delete ---
+mcp__claude_ai_Google_Calendar__list_events
+mcp__claude_ai_Google_Calendar__search_events
+mcp__claude_ai_Google_Calendar__list_calendars
+
+# --- Drive: read only ---
+mcp__claude_ai_Google_Drive__search_files
+mcp__claude_ai_Google_Drive__read_file_content
+
+# --- headless browser, for pages that need rendering ---
+mcp__playwright__browser_navigate
+mcp__playwright__browser_snapshot
