@@ -49,6 +49,18 @@ No sudo needed -- everything lives under `$HOME`, which matters because
 Then `crontab -e` and append `docs/crontab.snippet` below the existing
 `CRON_TZ` line.
 
+## Step 1a -- point the ollama backend at the right tag (optional)
+
+Only needed if you plan to use `ct -b ollama`. Confirm the exact local tag --
+don't guess it:
+
+    ollama list
+
+Then set `OLLAMA_MODEL` to that tag in the same crontab, next to `CRON_TZ`
+(cron's environment doesn't inherit your shell's). If it's left unset,
+`queue-runner.sh` moves any `backend: ollama` task straight to `failed/`
+rather than guessing.
+
 ## Step 2 -- confirm the tool prefixes
 
 The allowlist in `_adhoc.tools` assumes lab01's human-readable MCP prefixes
@@ -68,6 +80,7 @@ From an SSH session on the phone:
     ct "summarise this week's calendar and flag any conflicts"
     ct -n "what did the choir group post today"
     ct -t 'mcp__playwright__browser_navigate' "check the LTISD calendar page"
+    ct -b ollama "condense this article into three bullet points"
     ct -l
 
 Without `-n`, a task waits for the 4:44am drain. That default is deliberate:

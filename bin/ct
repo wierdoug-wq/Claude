@@ -5,6 +5,7 @@
 #   ct "summarise this week's calendar and flag any conflicts"
 #   ct -n "what did the choir group post today"     # run within ~10 min
 #   ct -t 'mcp__playwright__browser_navigate' "..."  # grant an extra tool
+#   ct -b ollama "condense this article"             # run on local Ollama, not Claude
 #   ct -l                                            # list queue + recent results
 #
 # Without -n the task waits for the 3-4am drain, which is the default on
@@ -16,21 +17,28 @@ VAULT="${VAULT:-$HOME/vault}"
 QUEUE="$TASKS/queue"
 priority=defer
 tools=""
+backend=""
 
-while getopts ':nt:lh' opt; do
+while getopts ':nt:b:lh' opt; do
   case "$opt" in
     n) priority=now ;;
     t) tools="$OPTARG" ;;
+    b) backend="$OPTARG" ;;
     l)
       echo "queued:"; ls -1 "$QUEUE" 2>/dev/null | sed 's/^/  /' || true
       echo "recent results:"
       ls -1t "$VAULT/00_Inbox/Agent_Results" 2>/dev/null | head -5 | sed 's/^/  /' || true
       exit 0 ;;
-    h) sed -n '2,14p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    h) sed -n '2,12p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "ct: bad flag; try -h" >&2; exit 2 ;;
   esac
 done
 shift $((OPTIND - 1))
+
+case "$backend" in
+  '' | ollama) ;;
+  *) echo "ct: unknown backend '$backend' (only 'ollama' is supported); try -h" >&2; exit 2 ;;
+esac
 
 prompt="$*"
 [[ -n "${prompt//[[:space:]]/}" ]] || { echo "ct: nothing to queue; try -h" >&2; exit 2; }
@@ -48,6 +56,7 @@ file="$QUEUE/$(date +%Y%m%d-%H%M%S)-$slug.md"
   echo '---'
   echo "priority: $priority"
   [[ -n "$tools" ]] && echo "tools: $tools"
+  [[ -n "$backend" ]] && echo "backend: $backend"
   echo "queued: $(date -Iseconds)"
   echo '---'
   echo
@@ -55,7 +64,9 @@ file="$QUEUE/$(date +%Y%m%d-%H%M%S)-$slug.md"
 } >"$file"
 
 if [[ "$priority" == now ]]; then
-  echo "queued (runs within ~10 min): $(basename "$file")"
+  msg="queued (runs within ~10 min): $(basename "$file")"
 else
-  echo "queued for the overnight drain: $(basename "$file")"
+  msg="queued for the overnight drain: $(basename "$file")"
 fi
+[[ -n "$backend" ]] && msg="$msg [backend: $backend]"
+echo "$msg"

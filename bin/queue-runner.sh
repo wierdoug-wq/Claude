@@ -30,6 +30,10 @@ RESULTS="$VAULT/00_Inbox/Agent_Results"
 DEFAULT_TOOLS="$TASKS/_adhoc.tools"
 TIMEOUT="${TIMEOUT:-15m}"
 CLAUDE_BIN="${CLAUDE_BIN:-/usr/bin/claude}"
+OLLAMA_BIN="${OLLAMA_BIN:-ollama}"
+# No default tag here on purpose — confirm the exact local one with `ollama list`
+# and export it in cron's environment, e.g. OLLAMA_MODEL=gemma3:12b.
+OLLAMA_MODEL="${OLLAMA_MODEL:-}"
 
 mkdir -p "$QUEUE" "$DONE" "$FAILED" "$RESULTS" "$(dirname "$LOG")"
 
@@ -83,11 +87,19 @@ for task in "${queued[@]}"; do
   # A wildcard is only legal after a literal mcp__<server>__ prefix — bare
   # 'mcp__*' is rejected outright — so every tool is named explicitly. A run
   # that needs a tool it was not granted stops on a permission prompt that
-  # nobody is awake to answer.
+  # nobody is awake to answer. Irrelevant for the ollama backend below, which
+  # has no tool access at all, but harmless to compute either way.
   tools=""
   [[ -f "$DEFAULT_TOOLS" ]] && tools="$(grep -vE '^\s*(#|$)' "$DEFAULT_TOOLS" | paste -sd,)"
   extra="$(fm tools "$task")"
   [[ -n "$extra" ]] && tools="${tools:+$tools,}$extra"
+
+  backend="$(fm backend "$task")"; backend="${backend:-claude}"
+  if [[ "$backend" == ollama && -z "$OLLAMA_MODEL" ]]; then
+    log "[$MODE] $name: backend=ollama but OLLAMA_MODEL is unset, moving to failed/"
+    mv "$task" "$FAILED/"
+    continue
+  fi
 
   prompt="$(body "$task")"
   if [[ -z "${prompt//[[:space:]]/}" ]]; then
@@ -106,10 +118,14 @@ for task in "${queued[@]}"; do
   # Never clobber an earlier result for the same task name.
   n=2; while [[ -e "$out" ]]; do out="${out%.md}-$n.md"; ((n++)); done
   started="$(date -Iseconds)"
-  log "[$MODE] $name: start (priority=$priority)"
+  log "[$MODE] $name: start (priority=$priority, backend=$backend)"
 
   set +e
-  result="$(timeout "$TIMEOUT" "$CLAUDE_BIN" -p "$prompt" --allowedTools "$tools" 2>&1)"
+  if [[ "$backend" == ollama ]]; then
+    result="$(timeout "$TIMEOUT" "$OLLAMA_BIN" run "$OLLAMA_MODEL" "$prompt" 2>&1)"
+  else
+    result="$(timeout "$TIMEOUT" "$CLAUDE_BIN" -p "$prompt" --allowedTools "$tools" 2>&1)"
+  fi
   rc=$?
   set -e
 
@@ -121,6 +137,7 @@ for task in "${queued[@]}"; do
     echo "created: $(date +%Y-%m-%d)"
     echo "task: $name"
     echo "priority: $priority"
+    echo "backend: $backend"
     echo "started: $started"
     echo "finished: $(date -Iseconds)"
     echo "exit_code: $rc"

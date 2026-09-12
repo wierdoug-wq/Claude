@@ -8,6 +8,10 @@ The worker is lab01's own Claude Code. Tasks are queued into
 `00_Inbox/Agent_Results/` — where Syncthing carries them to Beastly like any
 other note.
 
+A task can opt into running on lab01's local Ollama model instead, for
+simple text-in/text-out work that doesn't need Claude's tools or token
+budget — see `bin/ct -h`.
+
 | Path | Purpose |
 |---|---|
 | `bin/ct` | Queue a task. Built to be typed on a phone over SSH. |

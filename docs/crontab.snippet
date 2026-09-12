@@ -7,6 +7,11 @@
 #
 # PATH must also already be set; cron's default environment is too bare to
 # find /usr/bin/claude.
+#
+# OLLAMA_MODEL is optional -- only needed for `ct -b ollama` tasks. Set it to
+# the exact tag from `ollama list` on lab01; don't guess. Leaving it unset is
+# safe: queue-runner.sh routes ollama-backed tasks to failed/ instead.
+# OLLAMA_MODEL=REPLACE_WITH_EXACT_TAG_FROM_OLLAMA_LIST
 
 # Ad-hoc tasks marked `priority: now` -- every 10 minutes.
 # Cheap when the queue is empty: the runner exits immediately without starting
