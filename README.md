@@ -15,6 +15,7 @@ other note.
 | `claude-tasks/_adhoc.tools` | Default tool allowlist. Read-only by construction. |
 | `docs/crontab.snippet` | Cron lines to append below the existing `CRON_TZ`. |
 | `docs/INSTALL.md` | Setup, including the off-LAN Tailscale check to do first. |
+| `docs/kb-retrieval-eval.md` | How this system's retrieval compares to "chunkless RAG." |
 
 Start with **`docs/INSTALL.md` Step 0** — off-LAN Tailscale is recorded as
 unverified in `Home_Lab_Home.md`, and it is the one thing this all depends on.
