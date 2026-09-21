@@ -38,8 +38,9 @@ If that fails, nothing below matters. Fix it first.
 On lab01:
 
     git clone <this repo> ~/src/lab01-queue
-    install -m 755 ~/src/lab01-queue/bin/queue-runner.sh ~/bin/queue-runner.sh
-    install -m 755 ~/src/lab01-queue/bin/ct              ~/bin/ct
+    install -m 755 ~/src/lab01-queue/bin/queue-runner.sh      ~/bin/queue-runner.sh
+    install -m 755 ~/src/lab01-queue/bin/ct                   ~/bin/ct
+    install -m 755 ~/src/lab01-queue/bin/build-vault-index.sh ~/bin/build-vault-index.sh
     install -m 644 ~/src/lab01-queue/claude-tasks/_adhoc.tools ~/claude-tasks/_adhoc.tools
     mkdir -p ~/claude-tasks/{queue,done,failed}
 
@@ -81,10 +82,24 @@ writes. The runner writes Claude's output into the vault itself, so no task
 needs `Write` just to produce a note. Grant more per task with `ct -t`, and
 only when you mean it.
 
+## Vault index and result retention
+
+Every run checks whether any note under `$VAULT` has changed since the last
+build and, if so, regenerates `$VAULT/.vault-index/INDEX.md` -- a manifest
+grouped by folder with each note's title, `type`, and `tags`. It costs one
+`find -newer` check per run (no LLM call), and every queued task's prompt
+gets a pointer to it prepended, so a task's first move can be reading the
+index instead of a blind `Glob`/`Grep` sweep of the whole vault. Override the
+script location with `BUILD_INDEX` if it isn't installed next to
+`queue-runner.sh`.
+
+`--drain` also archives result notes older than `RESULTS_RETENTION_DAYS`
+(default 14) into `00_Inbox/Agent_Results/_archive/YYYY-MM/`, so the inbox
+folder and the index build both stay cheap as results pile up.
+
 ## Not addressed here
 
 - **A nicer phone UI.** `tailscale serve` could put a small submit form on
   `https://lab01.<tailnet>.ts.net/` reachable only inside the tailnet. Use
   `serve`, never `funnel` -- funnel is public.
 - **Long-running tasks.** The 15-minute timeout matches `run-claude-task.sh`.
-- **Result cleanup.** `00_Inbox/Agent_Results/` grows without bound.
