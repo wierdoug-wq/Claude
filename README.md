@@ -12,6 +12,7 @@ other note.
 |---|---|
 | `bin/ct` | Queue a task. Built to be typed on a phone over SSH. |
 | `bin/queue-runner.sh` | Drains the queue. `--now` for urgent, `--drain` overnight. |
+| `bin/build-vault-index.sh` | Regenerates the vault index tasks check before a Glob/Grep sweep. |
 | `claude-tasks/_adhoc.tools` | Default tool allowlist. Read-only by construction. |
 | `docs/crontab.snippet` | Cron lines to append below the existing `CRON_TZ`. |
 | `docs/INSTALL.md` | Setup, including the off-LAN Tailscale check to do first. |

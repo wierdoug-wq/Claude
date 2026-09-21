@@ -47,44 +47,52 @@ whatever files match — full agentic navigation, zero similarity search.
   than Docling's per-node page/bbox, but it's the right granularity for a
   one-note-per-answer result — there's no sub-document region to cite.
 
-## Gaps against the video's model
+## Gaps against the video's model, and what changed
 
-- **No hybrid layer.** The video's own recommendation, after making the case
-  for structural navigation, is *not* "abandon similarity search" — it's
-  "use similarity search to find the right document, then navigate its
-  structure." This system has no equivalent first pass: every task
-  glob/greps the whole vault cold. That's fine at current size; the README
-  itself flags `00_Inbox/Agent_Results/` as "grows without bound" with no
-  cleanup story. Once the vault is large enough that a blind grep is slow
-  or burns context, there's no cheaper first-pass index (a generated
-  `INDEX.md`, or frontmatter-tag search) to narrow scope before reading —
-  worth building before it's needed, not after a task times out.
-- **No outline-first navigation.** Docling gives the agent a table of
-  contents before it opens anything, so the agent can reason "which section"
-  before spending a read. Here the agent's first move on a cold task is
-  necessarily a blind `Glob`/`Grep` — there's no cheap "here's the vault's
-  shape" step it's handed up front. A standing outline (folder structure +
-  frontmatter tag index) would let tasks skip straight to the relevant
-  section the way the video's agent does with Docling's tree, instead of
-  discovering structure by searching for it every time.
-- **Table/structure handling is untested by this repo.** The read-only
-  allowlist includes `mcp__claude_ai_Google_Drive__read_file_content`,
-  which can return exported Docs/Sheets. Unlike Docling, there's no
-  explicit guarantee here that a spreadsheet's table structure survives
-  being flattened to text for the agent — it depends entirely on what that
-  MCP tool hands back. If Drive documents with real tables start showing
-  up in ad-hoc tasks, that's the one place this system could hit exactly
-  the failure mode the video describes (structure lost before the agent
-  ever sees it), and it's worth a quick check rather than an assumption.
+- **No hybrid layer.** *Addressed.* The video's own recommendation, after
+  making the case for structural navigation, is *not* "abandon similarity
+  search" — it's "use similarity search to find the right document, then
+  navigate its structure." This system had no equivalent first pass: every
+  task glob/grepped the whole vault cold. `bin/build-vault-index.sh` now
+  generates `$VAULT/.vault-index/INDEX.md`, a manifest grouped by folder
+  with each note's title, `type`, and `tags`; `queue-runner.sh` rebuilds it
+  only when something under the vault has actually changed (one
+  `find -newer` check, no LLM call) and prepends a pointer to it on every
+  task prompt. That's the cheap first pass the video argues for, without
+  the embedding index it also argues isn't strictly necessary once
+  structure is preserved.
+- **No outline-first navigation.** *Addressed by the same change.* Docling
+  gives the agent a table of contents before it opens anything, so it can
+  reason "which section" before spending a read. Tasks now get that same
+  move: the index is the outline, and the prompt tells the agent to check
+  it before a full sweep, with an explicit fallback to `Glob`/`Grep` for
+  anything time-sensitive the index might lag.
+- **Result-note growth was undermining the fix.** Related but distinct
+  from either gap above: `00_Inbox/Agent_Results/` was flagged as growing
+  without bound, which would eventually make both the index and a blind
+  grep expensive over the same pile of agent output. `queue-runner.sh
+  --drain` now archives result notes older than `RESULTS_RETENTION_DAYS`
+  (default 14 days) into `_archive/YYYY-MM/`, and the index generator
+  excludes `Agent_Results` from its per-note listing entirely — it's agent
+  output, not curated notes, so it doesn't belong in the outline.
+- **Table/structure handling is still untested by this repo.** The
+  read-only allowlist includes
+  `mcp__claude_ai_Google_Drive__read_file_content`, which can return
+  exported Docs/Sheets. Unlike Docling, there's no explicit guarantee here
+  that a spreadsheet's table structure survives being flattened to text
+  for the agent — it depends entirely on what that MCP tool hands back.
+  Left open deliberately: it needs a real Drive document with tables to
+  test against, not a guess.
 
 ## Bottom line
 
-The design already lands closer to the video's endpoint (agentic structural
-navigation) than to the RAG pipeline it argues against — mostly because the
-vault's native format (Markdown) sidesteps the problem Docling exists to
-solve for PDFs. The gap isn't structure preservation, it's scale: no
-first-pass index or standing outline means every task pays a full cold
-search, which is the exact cost the video's hybrid recommendation is
-designed to avoid. That only becomes a real problem as
-`00_Inbox/Agent_Results/` keeps growing unbounded, so it's worth addressing
-before it's a timeout on the 15-minute budget rather than after.
+The design already landed closer to the video's endpoint (agentic
+structural navigation) than to the RAG pipeline it argues against — mostly
+because the vault's native format (Markdown) sidesteps the problem Docling
+exists to solve for PDFs. The scale gap — no first-pass index, no retention
+on the folder that would keep growing under it — is now closed: a cheap,
+LLM-free index gives every task the outline-first move the video describes,
+and drain-time archiving keeps both the index and a fallback grep affordable
+as results accumulate. What's left (Drive table fidelity) is a genuine
+unknown, not a design gap, and stays open until there's a real document to
+test it against.

@@ -27,9 +27,14 @@ FAILED="$TASKS/failed"
 LOG="${LOG:-$HOME/logs/queue-runner.log}"
 LOCK="$HOME/.queue-runner.lock"
 RESULTS="$VAULT/00_Inbox/Agent_Results"
+RESULTS_ARCHIVE="$RESULTS/_archive"
+RESULTS_RETENTION_DAYS="${RESULTS_RETENTION_DAYS:-14}"
 DEFAULT_TOOLS="$TASKS/_adhoc.tools"
 TIMEOUT="${TIMEOUT:-15m}"
 CLAUDE_BIN="${CLAUDE_BIN:-/usr/bin/claude}"
+INDEX_DIR="$VAULT/.vault-index"
+INDEX_OUT="$INDEX_DIR/INDEX.md"
+BUILD_INDEX="${BUILD_INDEX:-$(dirname "$0")/build-vault-index.sh}"
 
 mkdir -p "$QUEUE" "$DONE" "$FAILED" "$RESULTS" "$(dirname "$LOG")"
 
@@ -48,6 +53,26 @@ exec 9>"$LOCK"
 if ! flock -n 9; then
   log "[$MODE] another run holds the lock; skipping"
   exit 0
+fi
+
+# Keep the vault index fresh so a task's first move can be reading it instead
+# of a blind Glob/Grep sweep. Cheap: one `find -newer` check, no LLM call --
+# safe to run on every --now tick even when the queue is empty.
+if [[ -x "$BUILD_INDEX" ]]; then
+  stale=1
+  if [[ -f "$INDEX_OUT" ]]; then
+    newer="$(find "$VAULT" -name '*.md' -newer "$INDEX_OUT" \
+              -not -path "$INDEX_DIR/*" -not -path "$RESULTS/*" \
+              -print -quit 2>/dev/null)"
+    [[ -z "$newer" ]] && stale=0
+  fi
+  if (( stale )); then
+    if "$BUILD_INDEX" "$VAULT" >>"$LOG" 2>&1; then
+      log "[$MODE] vault index rebuilt"
+    else
+      log "[$MODE] vault index rebuild failed (rc=$?)"
+    fi
+  fi
 fi
 
 # Read one frontmatter key from a task file. Frontmatter is the block between
@@ -69,7 +94,7 @@ body() {
 
 shopt -s nullglob
 queued=("$QUEUE"/*.md)
-(( ${#queued[@]} )) || { log "[$MODE] queue empty"; exit 0; }
+(( ${#queued[@]} )) || log "[$MODE] queue empty"
 
 for task in "${queued[@]}"; do
   name="$(basename "$task" .md)"
@@ -96,6 +121,18 @@ for task in "${queued[@]}"; do
     continue
   fi
 
+  # Point the agent at the standing index before it goes hunting. The raw
+  # $prompt (not this) is what gets written into the result note's Request
+  # section, so the note stays a clean record of what was actually asked.
+  full_prompt="$prompt"
+  if [[ -f "$INDEX_OUT" ]]; then
+    full_prompt="Vault index: $INDEX_OUT -- a generated outline by folder, type,
+and tags. Check it before a full Glob/Grep sweep of the vault. It can lag
+same-minute edits, so fall back to Glob/Grep for anything time-sensitive.
+
+$prompt"
+  fi
+
   # `ct` already names tasks with a queue timestamp; don't stamp them twice.
   # Anything queued by hand without one gets a stamp so results stay ordered.
   if [[ "$name" =~ ^[0-9]{8}-[0-9]{6}- ]]; then
@@ -109,7 +146,7 @@ for task in "${queued[@]}"; do
   log "[$MODE] $name: start (priority=$priority)"
 
   set +e
-  result="$(timeout "$TIMEOUT" "$CLAUDE_BIN" -p "$prompt" --allowedTools "$tools" 2>&1)"
+  result="$(timeout "$TIMEOUT" "$CLAUDE_BIN" -p "$full_prompt" --allowedTools "$tools" 2>&1)"
   rc=$?
   set -e
 
@@ -156,6 +193,20 @@ for task in "${queued[@]}"; do
     log "[$MODE] $name: exit $rc -> $out"
   fi
 done
+
+# Archive old results so Agent_Results doesn't grow without bound and a
+# Glob/Grep sweep of it stays cheap. Drain-only: filesystem housekeeping,
+# not something a 9am --now tick should pay for.
+if [[ "$MODE" == drain ]]; then
+  archived=0
+  while IFS= read -r -d '' f; do
+    month="$(date -r "$f" +%Y-%m)"
+    mkdir -p "$RESULTS_ARCHIVE/$month"
+    mv "$f" "$RESULTS_ARCHIVE/$month/"
+    archived=$((archived + 1))
+  done < <(find "$RESULTS" -maxdepth 1 -name '*.md' -mtime "+$RESULTS_RETENTION_DAYS" -print0)
+  (( archived )) && log "[$MODE] archived $archived result note(s) older than ${RESULTS_RETENTION_DAYS}d"
+fi
 
 # Self-trim, matching run-claude-task.sh.
 if [[ -f "$LOG" ]] && (( $(wc -l <"$LOG") > 2000 )); then
