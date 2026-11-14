@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+#
+# droid — drive lab01's headless Android emulator. Built for Claude to call.
+#
+#   droid start [--window]      boot the emulator (headless unless --window)
+#   droid stop | status
+#   droid screen                list on-screen elements: text, id, tap point
+#   droid shot [file.png]       screenshot; prints the path (read it to see it)
+#   droid tap X Y               tap a point (coordinates from `droid screen`)
+#   droid swipe X1 Y1 X2 Y2 [ms]
+#   droid type "text"           type into the focused field
+#   droid key NAME              HOME, BACK, ENTER, TAB, APP_SWITCH, DEL ...
+#   droid apps                  installed third-party packages
+#   droid launch PKG            open an installed app
+#   droid play PKG              open the app's Play Store page
+#   droid pull-apk PKG [DIR]    copy an installed app's APK(s) to DIR
+#   droid log [PKG]             last 300 logcat lines (only PKG's, if given)
+#   droid view                  how to watch/drive the screen from Beastly
+#
+# Deliberately no raw `adb shell` passthrough: granting `Bash(droid:*)` gives
+# Claude these verbs and nothing broader.
+
+set -euo pipefail
+LAB="${ANDROID_LAB:-$HOME/android-lab}"
+[[ -f "$LAB/env.sh" ]] && . "$LAB/env.sh"
+AVD="${ANDROID_AVD_NAME:-lab01-play}"
+ADB="${REA_ADB_PATH:-adb}"
+SERIAL="${DROID_SERIAL:-emulator-5554}"
+a() { "$ADB" -s "$SERIAL" "$@"; }
+
+usage() { sed -n '3,22p' "$0" | sed 's/^# \?//'; }
+die()   { echo "droid: $*" >&2; exit 1; }
+need_up() { a get-state >/dev/null 2>&1 || die "emulator not running; droid start"; }
+int()   { [[ "$1" =~ ^[0-9]+$ ]] || die "not a number: $1"; }
+pkg_ok(){ [[ "$1" =~ ^[A-Za-z0-9_.]+$ ]] || die "bad package name: $1"; }
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  start)
+    if a get-state >/dev/null 2>&1; then echo "already running ($SERIAL)"; exit 0; fi
+    mkdir -p "$LAB"
+    win=(-no-window); [[ "${1:-}" == --window ]] && win=()
+    nohup emulator -avd "$AVD" "${win[@]}" -no-audio -no-boot-anim \
+      -gpu swiftshader_indirect -port 5554 >"$LAB/emulator.log" 2>&1 &
+    echo "booting (log: $LAB/emulator.log)..."
+    timeout 300 "$ADB" -s "$SERIAL" wait-for-device \
+      || die "no device after 5 min; see $LAB/emulator.log"
+    for _ in $(seq 150); do
+      [[ "$(a shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]] && { echo "ready"; exit 0; }
+      sleep 2
+    done
+    die "booted but not ready after 5 min; see $LAB/emulator.log" ;;
+
+  stop)   a emu kill >/dev/null 2>&1 && echo stopped || echo "not running" ;;
+  status) a get-state >/dev/null 2>&1 && echo "running ($SERIAL)" || echo "not running" ;;
+
+  screen)
+    need_up
+    a shell uiautomator dump /sdcard/droid-ui.xml >/dev/null
+    a exec-out cat /sdcard/droid-ui.xml | python3 -c '
+import re, sys, xml.etree.ElementTree as ET
+root = ET.fromstring(sys.stdin.read())
+for n in root.iter("node"):
+    text, desc = n.get("text", ""), n.get("content-desc", "")
+    rid = n.get("resource-id", "").split("/")[-1]
+    click = n.get("clickable") == "true"
+    if not (text or desc or (click and rid)):
+        continue
+    x1, y1, x2, y2 = map(int, re.findall(r"\d+", n.get("bounds", "[0,0][0,0]")))
+    mark = "*" if click else " "
+    label = repr(text or desc)[:40]
+    print(f"tap {(x1+x2)//2:>4} {(y1+y2)//2:>4}  {mark} {label:40} {rid}")
+' ;;
+
+  shot)
+    need_up
+    out="${1:-$LAB/shots/$(date +%Y%m%d-%H%M%S).png}"
+    mkdir -p "$(dirname "$out")"
+    a exec-out screencap -p >"$out"
+    echo "$out" ;;
+
+  tap)   need_up; int "${1:-}"; int "${2:-}"; a shell input tap "$1" "$2" ;;
+  swipe) need_up; for v in "${@:1:4}"; do int "$v"; done; [[ $# -ge 4 ]] || die "swipe X1 Y1 X2 Y2 [ms]"
+         a shell input swipe "$1" "$2" "$3" "$4" "${5:-300}" ;;
+  type)
+    need_up; [[ $# -ge 1 ]] || die 'type "text"'
+    # `input text` takes %s for spaces; quote the rest for the device shell.
+    t="${*// /%s}"; a shell input text "'${t//\'/\'\\\'\'}'" ;;
+  key)
+    need_up; k="${1:-}"; [[ "$k" =~ ^[A-Z_0-9]+$ ]] || die "key NAME (e.g. BACK)"
+    a shell input keyevent "KEYCODE_${k#KEYCODE_}" ;;
+
+  apps)   need_up; a shell pm list packages -3 | sed 's/^package://' | sort ;;
+  launch) need_up; pkg_ok "${1:-}"; a shell monkey -p "$1" -c android.intent.category.LAUNCHER 1 >/dev/null && echo "launched $1" ;;
+  play)   need_up; pkg_ok "${1:-}"; a shell am start -a android.intent.action.VIEW -d "market://details?id=$1" >/dev/null && echo "opened Play page for $1" ;;
+
+  pull-apk)
+    need_up; pkg_ok "${1:-}"
+    dir="${2:-$LAB/apks/$1}"; mkdir -p "$dir"
+    paths="$(a shell pm path "$1" | tr -d '\r' | sed 's/^package://')"
+    [[ -n "$paths" ]] || die "$1 is not installed"
+    while read -r p; do a pull "$p" "$dir/$(basename "$p")" >/dev/null; echo "$dir/$(basename "$p")"; done <<<"$paths" ;;
+
+  log)
+    need_up
+    if [[ -n "${1:-}" ]]; then
+      pkg_ok "$1"; pid="$(a shell pidof "$1" | tr -d '\r')"
+      [[ -n "$pid" ]] || die "$1 is not running"
+      a logcat -d -t 300 --pid="$pid"
+    else
+      a logcat -d -t 300
+    fi ;;
+
+  view)
+    cat <<'EOF'
+To see and use the emulator screen from Beastly (needed once, to sign in to
+Google Play), install scrcpy on Beastly, then:
+
+  adb kill-server
+  ssh -CN -L5037:localhost:5037 -R27183:localhost:27183 doug@lab01
+
+and in a second terminal on Beastly:
+
+  scrcpy
+
+adb stays bound to lab01's localhost; the SSH tunnel is the only way in.
+EOF
+    ;;
+
+  ""|-h|--help|help) usage ;;
+  *) die "unknown command '$cmd'; droid -h" ;;
+esac

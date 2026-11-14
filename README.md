@@ -15,6 +15,7 @@ other note.
 | `claude-tasks/_adhoc.tools` | Default tool allowlist. Read-only by construction. |
 | `docs/crontab.snippet` | Cron lines to append below the existing `CRON_TZ`. |
 | `docs/INSTALL.md` | Setup, including the off-LAN Tailscale check to do first. |
+| `bin/droid`, `bin/android-lab-setup.sh` | Headless Android emulator Claude can drive, plus REA for reading apps. See `docs/ANDROID_LAB.md`. |
 
 Start with **`docs/INSTALL.md` Step 0** — off-LAN Tailscale is recorded as
 unverified in `Home_Lab_Home.md`, and it is the one thing this all depends on.
